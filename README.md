@@ -125,25 +125,21 @@ Sigma is designed to feel like a best friend who cooks. The system instruction g
 │   │  onToolCall() → background tasks → result queue            │  │
 │   │  Widget slots: Timer | BBox | HowTo | Search               │  │
 │   └─────────────────────────────────────────────────────────── ┘  │
-└──────────────┬──────────────────────────────────┬─────────────────┘
-               │                                  │
-       Option A: Direct API              Option B: Via Backend
-       (API key in .env)                 (Vertex AI / GCP)
-               │                                  │
-               ▼                                  ▼
-┌──────────────────────────┐       ┌──────────────────────────────┐
-│   Gemini Live API        │       │   FastAPI Backend (Python)    │
-│                          │◄─────►│   WebSocket /ws relay         │
-│  gemini-2.5-flash-       │       │   uvicorn ASGI server         │
-│  native-audio-preview    │       └──────────────┬───────────────┘
-│  -12-2025                │                      │
-│                          │                      ▼
-│  • Bidirectional audio   │       ┌──────────────────────────────┐
-│  • Tool calling          │       │   Google Cloud Vertex AI      │
-│  • Live camera context   │       │   GOOGLE_GENAI_USE_VERTEXAI   │
-│  • Session resumption    │       │   Location: global            │
-│  • Context compression   │       └──────────────────────────────┘
-└──────────┬───────────────┘
+└──────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼ (API key in frontend/.env)
+┌──────────────────────────────────────────────┐
+│              Gemini Live API                  │
+│                                               │
+│  gemini-2.5-flash-native-audio-preview        │
+│  -12-2025                                     │
+│                                               │
+│  • Bidirectional audio                        │
+│  • Tool calling                               │
+│  • Live camera context                        │
+│  • Session resumption                         │
+│  • Context compression                        │
+└──────────────┬───────────────────────────────┘
            │
            │  Tool calls dispatch background tasks
            ▼
@@ -236,14 +232,6 @@ sigma/
 │   │   └── pcm-player-processor.js    # AudioWorklet: 24kHz PCM → speaker
 │   ├── package.json
 │   └── .env                         # VITE_GEMINI_API_KEY
-│
-├── backend/                         # FastAPI relay (Vertex AI path)
-│   ├── main.py                      # WebSocket /ws + GET /health
-│   ├── config.py                    # Vertex AI + system instruction
-│   ├── gemini_session.py            # GeminiLiveSession async handler
-│   └── requirements.txt
-│
-├── .env.example                     # GCP credentials template
 └── README.md
 ```
 
@@ -253,12 +241,11 @@ sigma/
 
 ### Prerequisites
 - Node.js 18+
-- Python 3.11+
-- A Google AI Studio API key **or** a Google Cloud project with Vertex AI enabled
+- A Google AI Studio API key
 - A modern browser with WebRTC support (Chrome recommended)
 - A webcam and microphone
 
-### Frontend Setup (Direct API — quickest path)
+### Setup
 
 ```bash
 cd frontend
@@ -277,28 +264,6 @@ npm run dev
 
 Open the app, grant microphone and camera permissions, and start talking.
 
-### Backend Setup (Vertex AI / Google Cloud path)
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-Copy and fill in credentials:
-```bash
-cp .env.example .env
-```
-
-```bash
-uvicorn main:app --reload --port 8000
-# → ws://localhost:8000/ws
-# → http://localhost:8000/health
-```
-
-The frontend auto-connects to the backend WebSocket when `VITE_BACKEND_URL` is set in `frontend/.env`.
-
 ### Using Tutorial Mode
 
 On the splash screen, paste a YouTube cooking tutorial URL before starting the session. Sigma will analyze the video with Gemini, extract all steps, and load them into the step progress bar. Navigate with voice: *"next step"*, *"what step am I on?"*, *"what's coming up?"*
@@ -309,11 +274,7 @@ On the splash screen, paste a YouTube cooking tutorial URL before starting the s
 
 | Variable | File | Required | Description |
 |---|---|---|---|
-| `VITE_GEMINI_API_KEY` | `frontend/.env` | Yes (direct mode) | Google AI Studio API key |
-| `VITE_BACKEND_URL` | `frontend/.env` | No | Backend WS URL (enables Vertex AI path) |
-| `GOOGLE_CLOUD_PROJECT` | `.env` (root) | Yes (backend) | GCP project ID |
-| `GOOGLE_CLOUD_LOCATION` | `.env` (root) | No | Vertex AI region (default: `us-central1`) |
-| `GOOGLE_GENAI_USE_VERTEXAI` | `.env` (root) | Yes (backend) | Set to `TRUE` |
+| `VITE_GEMINI_API_KEY` | `frontend/.env` | Yes | Google AI Studio API key |
 
 ---
 
@@ -326,9 +287,6 @@ On the splash screen, paste a YouTube cooking tutorial URL before starting the s
 | Styling | Tailwind CSS | 3.4.17 |
 | Animation | Framer Motion | 12.6.0 |
 | Gemini SDK (JS) | @google/genai | 1.45.0 |
-| Backend framework | FastAPI + Uvicorn | 0.115+ |
-| Gemini SDK (Python) | google-genai | 1.14.0+ |
-| Cloud platform | Google Cloud Vertex AI | — |
 | Audio processing | Web Audio API + AudioWorklet | native |
 | Font | DM Sans (Google Fonts) | — |
 
@@ -336,20 +294,9 @@ On the splash screen, paste a YouTube cooking tutorial URL before starting the s
 
 ## Google Cloud Integration
 
-The backend connects to Google's **Vertex AI** platform using application-default credentials:
+The frontend connects directly to Gemini via the `@google/genai` JavaScript SDK using a Google AI Studio API key. There is no backend server — every API call originates in the browser.
 
-```python
-# backend/config.py
-genai.Client(
-    vertexai=True,
-    project=GOOGLE_CLOUD_PROJECT,
-    location=GOOGLE_CLOUD_LOCATION,
-)
-```
-
-Environment variable `GOOGLE_GENAI_USE_VERTEXAI=TRUE` routes all SDK calls through Vertex AI instead of the public AI Studio endpoint. This enables enterprise-grade quota, SLA, and compliance controls.
-
-The frontend also uses Google Search grounding for the `find_substitute` tool — an additional Google Cloud-native capability embedded in the agent's tool logic.
+Google Search grounding is used for the `find_substitute` tool — a Google Cloud-native capability that lets Gemini query the web for real ingredient substitutes before cross-referencing the camera feed.
 
 ---
 

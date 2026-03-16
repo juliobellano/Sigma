@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { GoogleGenAI } from "@google/genai";
 import CameraWidget from "./components/CameraWidget";
 import WidgetManager from "./components/WidgetManager";
@@ -92,39 +93,55 @@ function base64ToArrayBuffer(base64) {
 const EMPTY_SLOT = { type: "empty", data: {}, context: null, active: false };
 
 const TUTORIAL_LOADING_STAGES = [
-  { label: "Finding YouTube video", icon: "🔍" },
-  { label: "Watching the tutorial", icon: "▶️" },
-  { label: "Understanding the steps", icon: "🧠" },
-  { label: "Setting up your plan", icon: "📋" },
+  "Finding YouTube video...",
+  "Watching the tutorial...",
+  "Understanding the steps...",
+  "Setting up your plan...",
 ];
 
 function TutorialLoadingStages({ stage }) {
   return (
-    <div className="flex flex-col gap-3 w-full max-w-xs">
-      {TUTORIAL_LOADING_STAGES.map((s, i) => {
-        const done = i < stage;
-        const active = i === stage;
-        return (
-          <div key={i} className={`flex items-center gap-3 transition-opacity duration-300 ${i > stage ? "opacity-30" : "opacity-100"}`}>
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs transition-all duration-300
-              ${done ? "bg-accent-green" : active ? "bg-text-primary" : "bg-border"}`}>
-              {done ? (
-                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              ) : active ? (
-                <svg className="w-3 h-3 text-white animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-              ) : null}
-            </div>
-            <span className={`text-sm ${done ? "text-text-secondary line-through" : active ? "text-text-primary font-semibold" : "text-text-secondary"}`}>
-              {s.label}
-            </span>
-          </div>
-        );
-      })}
+    <div
+      className="w-72 h-40 rounded-card p-[1.5px] overflow-hidden"
+      style={{
+        background: "linear-gradient(135deg, #F59E0B, #FBBF24, #FDE68A, #F59E0B)",
+        backgroundSize: "300% 300%",
+        animation: "shimmer 3s ease infinite",
+      }}
+    >
+      <div
+        className="w-full h-full bg-card rounded-[23px] flex flex-col items-center justify-center gap-4 px-6"
+        style={{ animation: "subtlePulse 3s ease-in-out infinite" }}
+      >
+        {/* Bouncing dots */}
+        <div className="flex items-center gap-1.5">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="w-2 h-2 rounded-full bg-accent-amber"
+              style={{
+                animation: "dotBounce 1.2s ease-in-out infinite",
+                animationDelay: `${i * 0.15}s`,
+              }}
+            />
+          ))}
+        </div>
+        {/* Stage label with fade transition */}
+        <div className="h-6 relative flex items-center justify-center w-full">
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={stage}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              className="text-sm text-text-secondary font-medium absolute"
+            >
+              {TUTORIAL_LOADING_STAGES[stage]}
+            </motion.span>
+          </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 }
