@@ -2,13 +2,23 @@ import React from "react";
 import { motion } from "framer-motion";
 import CardShell from "./CardShell";
 
-export default function SearchWidget({ ingredient = "", substitutes = [] }) {
+export default function SearchWidget({ ingredient = "", substitutes = [], recommendation }) {
   return (
     <CardShell className="w-full h-full flex flex-col p-5 overflow-y-auto">
+      {recommendation && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="bg-accent-green/10 border border-accent-green/20 rounded-xl px-4 py-2.5 mb-4"
+        >
+          <span className="text-sm font-semibold text-accent-green">{recommendation}</span>
+        </motion.div>
+      )}
       <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-1">
         Substitute for
       </h3>
-      <p className="text-lg font-semibold text-text-primary mb-4">{ingredient}</p>
+      <p className="text-lg font-semibold text-text-primary mb-4 line-through decoration-red-400">{ingredient}</p>
       <ul className="flex flex-col gap-2">
         {substitutes.map((sub, i) => (
           <motion.li

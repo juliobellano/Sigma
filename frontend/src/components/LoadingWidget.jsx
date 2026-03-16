@@ -5,6 +5,7 @@ const MESSAGES = {
   timer: ["Setting up your timer...", "Counting down...", "Almost ready..."],
   bbox: ["Scanning your kitchen...", "Looking for ingredients...", "Analyzing the frame..."],
   substitution: ["Searching for alternatives...", "Checking your spice rack...", "Finding the best match..."],
+  how_to: ["Sketching the steps...", "Illustrating your guide...", "Almost done..."],
   generic: ["Thinking...", "Working on it...", "Let me check..."],
 };
 

@@ -5,6 +5,7 @@ import TimerWidget from "./TimerWidget";
 import BBoxWidget from "./BBoxWidget";
 import SearchWidget from "./SearchWidget";
 import ChatWidget from "./ChatWidget";
+import HowToWidget from "./HowToWidget";
 
 function EmptySlot() {
   return (
@@ -20,13 +21,14 @@ const WIDGET_MAP = {
   bbox: BBoxWidget,
   search: SearchWidget,
   chat: ChatWidget,
+  how_to: HowToWidget,
 };
 
 export default function WidgetManager({ slot, onTimerDone }) {
   const type = slot?.type || "empty";
   const Component = WIDGET_MAP[type];
   // Unique key so AnimatePresence detects changes between different widgets
-  const key = type === "empty" ? "empty" : `${type}-${slot.data?.label || ""}-${slot.data?.duration || ""}`;
+  const key = type === "empty" ? "empty" : `${type}-${slot.data?.label || slot.data?.ingredient || slot.data?.task || ""}-${slot.data?.duration || ""}`;
 
   return (
     <AnimatePresence mode="wait">

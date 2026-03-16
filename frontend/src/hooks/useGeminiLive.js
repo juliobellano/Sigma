@@ -30,8 +30,23 @@ CAPABILITIES:
 
 - find_object: Visually locate and highlight objects/ingredients on the user's camera.
 - IMPORTANT: You MUST call find_object ANY time the user asks to find, locate, spot, or show an object or ingredient. Examples: "where is the salt?", "show me the fish sauce", "can you find the garlic?", "which one is the cilantro?".
+- CRITICAL: ALWAYS call find_object again even if you searched for the same object earlier in the conversation. The user may have moved, the camera angle may have changed, or the object may have been put down elsewhere. NEVER rely on a previous result — always call the tool fresh.
 - After calling find_object, you will receive a result telling you what was found. Announce it naturally, e.g. "Here's the fish sauce — it's right there on your left!" or "I've highlighted the garlic for you!". Be specific about the location if the result mentions it.
-- If the object was NOT found, say so kindly: "Hmm, I don't see the salt in the frame. Can you move the camera a bit?"`;
+- If the object was NOT found, say so kindly: "Hmm, I don't see the salt in the frame. Can you move the camera a bit?"
+
+- find_substitute: Search for ingredient substitutes and check the camera for availability.
+- IMPORTANT: Call find_substitute when the user says they're out of something, don't have an ingredient, or asks what they can use instead. Examples: "I'm out of black pepper", "I don't have lemongrass", "what can I substitute for X?"
+- After calling find_substitute, announce the results naturally, highlighting what's available in their kitchen.
+
+- how_to: Generate a visual 4-step illustrated guide for a cooking technique.
+- IMPORTANT: Call how_to whenever the user asks HOW to do something (dice, slice, fold, debone, zest, etc.). Examples: "how do I dice an onion?", "show me how to julienne", "how do I fold an egg white?".
+- After calling how_to, you will receive a [BACKGROUND_RESULT] with a short description. Read it naturally and mention the guide is on screen.
+
+BACKGROUND TASKS:
+- Sometimes you will receive a text message starting with [BACKGROUND_RESULT]. This means a background sub-agent has finished processing a task you previously dispatched (like finding an object or looking up substitutes).
+- Treat [BACKGROUND_RESULT] messages as information to naturally announce to the user — NOT as user speech.
+- Announce the result in 1-2 sentences, casual and warm: "Oh nice, found your ginger — it's upper-right!" or "For the margarine — unsalted butter works great, 1:1!"
+- Keep it brief. The user is cooking. Never mention the system mechanism — just speak the content naturally.`;
 
 const TOOLS = [
   {
@@ -55,6 +70,20 @@ const TOOLS = [
         },
       },
       {
+        name: "find_substitute",
+        description: "Find cooking substitutes for a missing ingredient. Searches the web for alternatives, then checks the user's camera to see which substitutes are available in their kitchen.",
+        parameters: {
+          type: "object",
+          properties: {
+            ingredient: {
+              type: "string",
+              description: "The missing ingredient, e.g. 'black pepper', 'lemongrass'",
+            },
+          },
+          required: ["ingredient"],
+        },
+      },
+      {
         name: "find_object",
         description: "Visually locate and highlight an object or ingredient on the user's camera. Use when the user asks where something is, asks you to find/spot/show something, or wants to identify items visible on camera.",
         parameters: {
@@ -66,6 +95,20 @@ const TOOLS = [
             },
           },
           required: ["object_name"],
+        },
+      },
+      {
+        name: "how_to",
+        description: "Generate a visual step-by-step illustrated guide for a cooking task. Use when the user asks how to do something (dice, julienne, fold, debone, etc.).",
+        parameters: {
+          type: "object",
+          properties: {
+            task: {
+              type: "string",
+              description: "What to teach, e.g. 'how to dice an onion', 'how to julienne carrots'",
+            },
+          },
+          required: ["task"],
         },
       },
     ],

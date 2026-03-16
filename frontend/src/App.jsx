@@ -7,9 +7,19 @@ import DebugPanel from "./components/DebugPanel";
 import useGeminiLive from "./hooks/useGeminiLive";
 import useCamera from "./hooks/useCamera";
 import useAudioStream from "./hooks/useAudioStream";
+import { playAlarmChime } from "./utils/alarmChime";
 
 const BBOX_MODEL = "gemini-3-flash-preview";
-const bboxAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+const TTS_MODEL = "gemini-2.5-flash-preview-tts";
+const HOW_TO_MODEL = "gemini-3.1-flash-image-preview";
+const HOW_TO_SYSTEM_PROMPT = `Act as a professional illustrator. I have uploaded a reference image, and the goal to teach is: TASK_PLACEHOLDER.
+
+Create a clean, highly simplified 4-step illustrated infographic that teaches this goal. Design a horizontal landscape graphic layout divided into four clear, sequential sections from left to right (Step 1, Step 2, Step 3, Step 4).
+
+Using the uploaded photo as your absolute base, preserve as many assets, objects, lighting characteristics, and colors from the original picture as possible. Keep the visual identity of the items completely stable, but translate them into a very simple, minimalist illustration style.
+
+Show the progression of the action across the four sections. Add minimal, very readable text labels (max 3 words per step) and simple directional arrows to demonstrate the action. White or solid background, high contrast, no visual clutter, and no logos.`;
+const geminiAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 // Draw bounding boxes on an image client-side using canvas (preserves original dimensions)
 function drawBBoxes(frameB64, boxes) {
@@ -23,7 +33,7 @@ function drawBBoxes(frameB64, boxes) {
       ctx.drawImage(img, 0, 0);
 
       for (const box of boxes) {
-        const [yMin, xMin, yMax, xMax] = box.box_2d;
+        const [yMin, xMin, yMax, xMax] = box.box_2d ?? box.box;
         const x = (xMin / 1000) * img.width;
         const y = (yMin / 1000) * img.height;
         const w = ((xMax - xMin) / 1000) * img.width;
@@ -56,26 +66,111 @@ function ts() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, fractionalSecondDigits: 1 });
 }
 
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new ArrayBuffer(binary.length);
+  const view = new Uint8Array(bytes);
+  for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 const EMPTY_SLOT = { type: "empty", data: {}, context: null, active: false };
+
+function buildInjectionText(result) {
+  if (result.type === "find_object") {
+    return result.found
+      ? `[BACKGROUND_RESULT] Finished checking the camera. Found "${result.label}" — it's visible and highlighted on screen.`
+      : `[BACKGROUND_RESULT] Finished checking the camera. Couldn't spot "${result.label}" — user may need to shift the camera.`;
+  }
+  if (result.type === "how_to") {
+    const desc = result.description ? ` ${result.description}` : "";
+    return `[BACKGROUND_RESULT] Finished illustrating "${result.task}".${desc} The step-by-step guide is displayed on screen.`;
+  }
+  if (result.type === "find_substitute") {
+    const { ingredient, substitutes, best } = result;
+    const names = substitutes
+      .map((s) => `${s.name}${s.ratio ? ` (${s.ratio})` : ""}${s.available ? " — available in kitchen" : ""}`)
+      .join("; ");
+    const bestPart = best
+      ? ` Best pick: ${best.name}${best.available ? " — it's visible on the counter!" : ""}.`
+      : "";
+    return `[BACKGROUND_RESULT] Substitutes for "${ingredient}": ${names}.${bestPart} Results shown on screen.`;
+  }
+  return `[BACKGROUND_RESULT] A background task completed.`;
+}
 
 export default function App() {
   const [started, setStarted] = useState(false);
   const [voiceState, setVoiceState] = useState("idle");
+  const voiceStateRef = useRef("idle");       // mirrors voiceState for async callbacks
+  const pendingResultsRef = useRef([]);        // queue of completed sub-agent results
   const [logs, setLogs] = useState([]);
   const [widgets, setWidgets] = useState([EMPTY_SLOT, EMPTY_SLOT, EMPTY_SLOT]);
+  const [isCapturing, setIsCapturing] = useState(false);
 
   const addLog = useCallback((level, msg) => {
     setLogs((prev) => [...prev.slice(-200), { time: ts(), level, msg }]);
   }, []);
 
+  const setVoiceStateSync = useCallback((state) => {
+    voiceStateRef.current = state;
+    setVoiceState(state);
+  }, []);
+
   const audio = useAudioStream();
+
+  // TTS agent — uses Gemini 2.5 Flash TTS to speak announcements
+  const speakTTS = useCallback(async (text) => {
+    try {
+      addLog("info", `TTS: "${text}"`);
+      const response = await geminiAI.models.generateContent({
+        model: TTS_MODEL,
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: "Kore" },
+            },
+          },
+          systemInstruction: "You are Sigma, a warm, cheerful, and encouraging cooking companion. Speak casually like a supportive best friend in the kitchen — brief, upbeat, and natural. Never sound robotic.",
+        },
+      });
+
+      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (audioData) {
+        const pcm = base64ToArrayBuffer(audioData);
+        audio.playAudioChunk(pcm);
+        addLog("info", "TTS audio playing");
+      }
+    } catch (err) {
+      addLog("error", `TTS failed: ${err.message}`);
+    }
+  }, [audio.playAudioChunk, addLog]);
+
+  const processQueue = useCallback(() => {
+    if (pendingResultsRef.current.length === 0) return;
+    if (voiceStateRef.current !== "listening") return; // conductor busy, will retry on next onTurnComplete
+    const result = pendingResultsRef.current.shift();
+    const injection = buildInjectionText(result);
+    addLog("info", `[Queue] Injecting: ${injection}`);
+    geminiRef.current?.sendText(injection);
+  }, [addLog]); // refs don't need to be in deps
+
+  const enqueueResult = useCallback((result) => {
+    pendingResultsRef.current.push(result);
+    addLog("info", `[Queue] Enqueued ${result.type} (depth: ${pendingResultsRef.current.length})`);
+    if (voiceStateRef.current === "listening") {
+      processQueue(); // conductor idle — inject immediately
+    }
+  }, [addLog, processQueue]);
 
   const onAudio = useCallback(
     (data) => {
-      setVoiceState("speaking");
+      setVoiceStateSync("speaking");
       audio.playAudioChunk(data);
     },
-    [audio.playAudioChunk]
+    [audio.playAudioChunk, setVoiceStateSync]
   );
 
   const onTranscript = useCallback(
@@ -87,12 +182,13 @@ export default function App() {
 
   const onInterrupted = useCallback(() => {
     audio.handleInterruption();
-    setVoiceState("listening");
-  }, [audio.handleInterruption]);
+    setVoiceStateSync("listening");
+  }, [audio.handleInterruption, setVoiceStateSync]);
 
   const onTurnComplete = useCallback(() => {
-    setVoiceState("listening");
-  }, []);
+    setVoiceStateSync("listening");
+    processQueue(); // check for queued sub-agent results
+  }, [setVoiceStateSync, processQueue]);
 
   const captureFrameRef = useRef(null);
 
@@ -105,8 +201,7 @@ export default function App() {
         let placed = false;
 
         setWidgets((prev) => {
-          let slot = prev.findIndex((w) => w.type === "empty");
-          if (slot === -1) slot = prev.findIndex((w) => !w.active);
+          const slot = prev.findIndex((w) => w.type === "empty");
           if (slot === -1) return prev;
 
           placed = true;
@@ -124,13 +219,13 @@ export default function App() {
           if (placed) {
             session.sendToolResponse({
               functionResponses: [
-                { id: fc.id, response: { result: `Timer set for ${seconds} seconds${label ? ` (${label})` : ""}` } },
+                { id: fc.id, name: fc.name, response: { output: `Timer set for ${seconds} seconds${label ? ` (${label})` : ""}` } },
               ],
             });
           } else {
             session.sendToolResponse({
               functionResponses: [
-                { id: fc.id, response: { result: "All widget slots are in use. Tell the user to wait for a timer to finish." } },
+                { id: fc.id, name: fc.name, response: { output: "All widget slots are in use. Tell the user to wait for a timer to finish." } },
               ],
             });
           }
@@ -141,11 +236,14 @@ export default function App() {
         const { object_name } = fc.args || {};
         addLog("info", `Tool: find_object("${object_name}")`);
 
+        // Trigger camera flash animation
+        setIsCapturing(true);
+        setTimeout(() => setIsCapturing(false), 500);
+
         // Show loading widget
         let loadingSlot = -1;
         setWidgets((prev) => {
-          let slot = prev.findIndex((w) => w.type === "empty");
-          if (slot === -1) slot = prev.findIndex((w) => !w.active);
+          const slot = prev.findIndex((w) => w.type === "empty");
           if (slot === -1) return prev;
           loadingSlot = slot;
           const next = [...prev];
@@ -158,14 +256,19 @@ export default function App() {
         if (!frameB64) {
           addLog("error", "No camera frame available for find_object");
           session.sendToolResponse({
-            functionResponses: [{ id: fc.id, response: { result: "Camera is not available. Tell the user to make sure the camera is on." } }],
+            functionResponses: [{ id: fc.id, name: fc.name, response: { output: "Camera is not available. Tell the user to make sure the camera is on." } }],
           });
           return;
         }
 
+        // Respond to Gemini immediately — unblocks sequential tool dispatch
+        session.sendToolResponse({
+          functionResponses: [{ id: fc.id, name: fc.name, response: { output: "Searching, I'll highlight it when found." } }],
+        });
+
         (async () => {
           try {
-            const response = await bboxAI.models.generateContent({
+            const response = await geminiAI.models.generateContent({
               model: BBOX_MODEL,
               contents: [
                 {
@@ -180,6 +283,17 @@ export default function App() {
               ],
               config: {
                 responseMimeType: "application/json",
+                responseSchema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      label: { type: "string" },
+                      box_2d: { type: "array", items: { type: "number" } },
+                    },
+                    required: ["label", "box_2d"],
+                  },
+                },
               },
             });
 
@@ -210,23 +324,7 @@ export default function App() {
               return next;
             });
 
-            // Send tool response so Gemini Live can talk about it
-            const resultMsg = found
-              ? `Found ${object_name} in the camera view and highlighted it with a bounding box. Tell the user where you see it and that you've highlighted it on screen.`
-              : `Could not find ${object_name} in the current camera view. Tell the user you couldn't spot it and suggest moving the camera.`;
-
-            session.sendToolResponse({
-              functionResponses: [{ id: fc.id, response: { result: resultMsg } }],
-            });
-
-            // Nudge Gemini to speak about the result
-            setTimeout(() => {
-              geminiRef.current?.sendText(
-                found
-                  ? `[SYSTEM: The bounding box for "${object_name}" is now shown on screen. Tell the user briefly, e.g. "Here's the ${object_name}, I've highlighted it for you!"]`
-                  : `[SYSTEM: Could not find "${object_name}" on camera. Tell the user kindly, e.g. "I couldn't spot the ${object_name}. Try moving the camera a bit."]`
-              );
-            }, 500);
+            enqueueResult({ type: "find_object", label: object_name, found });
 
             // Auto-remove bbox widget after 5 seconds
             setTimeout(() => {
@@ -237,7 +335,7 @@ export default function App() {
                     : w
                 )
               );
-            }, 5000);
+            }, 15000);
           } catch (err) {
             addLog("error", `find_object failed: ${err.message}`);
             if (loadingSlot >= 0) {
@@ -247,14 +345,248 @@ export default function App() {
                 return next;
               });
             }
-            session.sendToolResponse({
-              functionResponses: [{ id: fc.id, response: { result: `Detection failed: ${err.message}. Tell the user something went wrong and to try again.` } }],
+          }
+        })();
+      }
+
+      if (fc.name === "find_substitute") {
+        const { ingredient } = fc.args || {};
+        addLog("info", `Tool: find_substitute("${ingredient}")`);
+
+        // Show loading widget
+        let loadingSlot = -1;
+        setWidgets((prev) => {
+          const slot = prev.findIndex((w) => w.type === "empty");
+          if (slot === -1) return prev;
+          loadingSlot = slot;
+          const next = [...prev];
+          next[slot] = { type: "loading", data: {}, context: "substitution", active: true };
+          return next;
+        });
+
+        // Respond to Gemini immediately — unblocks sequential tool dispatch
+        session.sendToolResponse({
+          functionResponses: [{ id: fc.id, name: fc.name, response: { output: "Searching for substitutes, I'll show the results when ready." } }],
+        });
+
+        (async () => {
+          try {
+            // Stage 1 — Search for substitutes via Google Search grounding
+            const searchResponse = await geminiAI.models.generateContent({
+              model: BBOX_MODEL,
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      text: `Find cooking substitutes for "${ingredient}".
+Return a JSON array: [{"name": "substitute name", "ratio": "usage ratio hint"}]
+Include 3-5 practical substitutes, ordered by similarity.`,
+                    },
+                  ],
+                },
+              ],
+              config: {
+                tools: [{ googleSearch: {} }],
+                responseMimeType: "application/json",
+              },
             });
+
+            const searchText = searchResponse.text.trim();
+            addLog("recv", `substitute search: ${searchText}`);
+            const substitutes = JSON.parse(searchText);
+
+            // Stage 2 — Vision: check which substitutes are visible in the kitchen
+            const frameB64 = captureFrameRef.current?.();
+            let results;
+
+            if (frameB64) {
+              const names = substitutes.map((s) => s.name);
+              const visionResponse = await geminiAI.models.generateContent({
+                model: BBOX_MODEL,
+                contents: [
+                  {
+                    role: "user",
+                    parts: [
+                      { inlineData: { mimeType: "image/jpeg", data: frameB64 } },
+                      {
+                        text: `Look at this image. Which of these items are visible: ${names.join(", ")}?
+Return a JSON array: [{"name": "item", "visible": true/false}]
+Only mark as visible if you can clearly see it.`,
+                      },
+                    ],
+                  },
+                ],
+                config: {
+                  responseMimeType: "application/json",
+                },
+              });
+
+              const visionText = visionResponse.text.trim();
+              addLog("recv", `substitute vision: ${visionText}`);
+              const visibility = JSON.parse(visionText);
+              const visibleSet = new Set(
+                visibility.filter((v) => v.visible).map((v) => v.name.toLowerCase())
+              );
+
+              results = substitutes.map((s) => ({
+                name: s.name,
+                ratio: s.ratio,
+                available: visibleSet.has(s.name.toLowerCase()),
+              }));
+            } else {
+              addLog("info", "No camera frame — skipping vision check");
+              results = substitutes.map((s) => ({
+                name: s.name,
+                ratio: s.ratio,
+                available: false,
+              }));
+            }
+
+            // Pick best recommendation (prefer available, otherwise first)
+            const best = results.find((r) => r.available) || results[0];
+            const recommendation = best
+              ? `Use ${best.name}${best.ratio ? ` — ${best.ratio}` : ""}`
+              : null;
+
+            // Update widget: loading → search
+            setWidgets((prev) => {
+              const next = [...prev];
+              const slot = loadingSlot >= 0 && loadingSlot < next.length ? loadingSlot : next.findIndex((w) => w.type === "loading");
+              if (slot === -1) return prev;
+              next[slot] = {
+                type: "search",
+                data: { ingredient, substitutes: results, recommendation },
+                context: null,
+                active: true,
+              };
+              return next;
+            });
+
+            enqueueResult({ type: "find_substitute", ingredient, substitutes: results, recommendation, best });
+
+            // Auto-remove after 15 seconds
+            setTimeout(() => {
+              setWidgets((prev) =>
+                prev.map((w) =>
+                  w.type === "search" && w.data?.ingredient === ingredient
+                    ? EMPTY_SLOT
+                    : w
+                )
+              );
+            }, 15000);
+          } catch (err) {
+            addLog("error", `find_substitute failed: ${err.message}`);
+            if (loadingSlot >= 0) {
+              setWidgets((prev) => {
+                const next = [...prev];
+                if (next[loadingSlot]?.type === "loading") next[loadingSlot] = EMPTY_SLOT;
+                return next;
+              });
+            }
+          }
+        })();
+      }
+
+      if (fc.name === "how_to") {
+        const { task } = fc.args || {};
+        addLog("info", `Tool: how_to("${task}")`);
+
+        // Camera flash
+        setIsCapturing(true);
+        setTimeout(() => setIsCapturing(false), 500);
+
+        // Show loading widget
+        let loadingSlot = -1;
+        setWidgets((prev) => {
+          const slot = prev.findIndex((w) => w.type === "empty");
+          if (slot === -1) return prev;
+          loadingSlot = slot;
+          const next = [...prev];
+          next[slot] = { type: "loading", data: {}, context: "how_to", active: true };
+          return next;
+        });
+
+        // Capture frame
+        const frameB64 = captureFrameRef.current?.();
+
+        // Respond immediately to unblock Gemini
+        session.sendToolResponse({
+          functionResponses: [{ id: fc.id, name: fc.name, response: { output: "Generating your visual guide, it'll appear on screen in a moment!" } }],
+        });
+
+        (async () => {
+          try {
+            const systemPrompt = HOW_TO_SYSTEM_PROMPT.replace("TASK_PLACEHOLDER", task);
+            const parts = frameB64
+              ? [
+                  { inlineData: { mimeType: "image/jpeg", data: frameB64 } },
+                  { text: task },
+                ]
+              : [{ text: task }];
+
+            const response = await geminiAI.models.generateContent({
+              model: HOW_TO_MODEL,
+              contents: [{ role: "user", parts }],
+              config: {
+                responseModalities: ["TEXT", "IMAGE"],
+                imageConfig: { aspectRatio: "16:9", imageSize: "512" },
+                thinkingConfig: { thinkingLevel: "MINIMAL" },
+                tools: [{ googleSearch: {} }],
+                systemInstruction: systemPrompt,
+              },
+            });
+
+            const responseParts = response.candidates?.[0]?.content?.parts || [];
+            const imagePart = responseParts.find((p) => p.inlineData?.mimeType?.startsWith("image/"));
+            const textPart = responseParts.find((p) => p.text);
+
+            const imageDataUrl = imagePart
+              ? `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
+              : null;
+            const description = textPart?.text?.trim() || "";
+
+            addLog("recv", `how_to raw response: ${JSON.stringify(response.candidates?.[0]?.content?.parts?.map((p) => p.text ? { text: p.text } : { inlineData: { mimeType: p.inlineData?.mimeType, size: p.inlineData?.data?.length } }))}`);
+            addLog("recv", `how_to description: "${description}"`);
+
+            // Update widget: loading → how_to
+            setWidgets((prev) => {
+              const next = [...prev];
+              const slot = loadingSlot >= 0 && loadingSlot < next.length ? loadingSlot : next.findIndex((w) => w.type === "loading");
+              if (slot === -1) return prev;
+              next[slot] = {
+                type: "how_to",
+                data: { image: imageDataUrl, task },
+                context: null,
+                active: true,
+              };
+              return next;
+            });
+
+            enqueueResult({ type: "how_to", task, description });
+
+            // Auto-remove after 30 seconds
+            setTimeout(() => {
+              setWidgets((prev) =>
+                prev.map((w) =>
+                  w.type === "how_to" && w.data?.task === task ? EMPTY_SLOT : w
+                )
+              );
+            }, 30000);
+          } catch (err) {
+            addLog("error", `how_to failed: ${err.message}`);
+            if (loadingSlot >= 0) {
+              setWidgets((prev) => {
+                const next = [...prev];
+                if (next[loadingSlot]?.type === "loading") next[loadingSlot] = EMPTY_SLOT;
+                return next;
+              });
+            }
           }
         })();
       }
     },
-    [addLog]
+    [addLog, enqueueResult]
   );
 
   const gemini = useGeminiLive({
@@ -280,8 +612,9 @@ export default function App() {
           : w
       )
     );
-    // Tell Gemini so it can announce
-    geminiRef.current?.sendText(`[SYSTEM: The timer for "${label}" just finished. Announce it to the user and remind them what to do, e.g. "Your ${label} timer is done! Don't forget to take it out."]`);
+    // Play alarm chime then TTS announcement
+    playAlarmChime();
+    speakTTS(`Hey, your ${label} timer just went off! Time to check on it.`);
     // Auto-remove widget after 5 seconds
     setTimeout(() => {
       setWidgets((prev) =>
@@ -292,7 +625,7 @@ export default function App() {
         )
       );
     }, 5000);
-  }, [addLog]);
+  }, [addLog, speakTTS]);
 
   const onCameraFrame = useCallback(
     (b64) => {
@@ -348,7 +681,7 @@ export default function App() {
     }
 
     gemini.connect();
-    setVoiceState("listening");
+    setVoiceStateSync("listening");
   };
 
   // Splash screen
@@ -391,7 +724,7 @@ export default function App() {
         }}
       >
         <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-3">
-          <CameraWidget videoRef={camera.videoRef} />
+          <CameraWidget videoRef={camera.videoRef} isCapturing={isCapturing} />
           {widgets.map((slot, i) => (
             <WidgetManager key={i} slot={slot} onTimerDone={onTimerDone} />
           ))}
