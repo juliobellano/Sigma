@@ -4,6 +4,7 @@ import CameraWidget from "./components/CameraWidget";
 import WidgetManager from "./components/WidgetManager";
 import VoiceIndicator from "./components/VoiceIndicator";
 import DebugPanel from "./components/DebugPanel";
+import TutorialProgressBar from "./components/TutorialProgressBar";
 import useGeminiLive from "./hooks/useGeminiLive";
 import useCamera from "./hooks/useCamera";
 import useAudioStream from "./hooks/useAudioStream";
@@ -12,6 +13,20 @@ import { playAlarmChime } from "./utils/alarmChime";
 const BBOX_MODEL = "gemini-3-flash-preview";
 const TTS_MODEL = "gemini-2.5-flash-preview-tts";
 const HOW_TO_MODEL = "gemini-3.1-flash-image-preview";
+const TUTORIAL_MODEL = "gemini-3.1-pro-preview";
+
+const TUTORIAL_SYSTEM_PROMPT = `Analyze this YouTube cooking tutorial video and extract all the cooking steps as a JSON array.
+
+For each step include:
+- step_number: integer starting at 0
+- step_name: short title (max 4 words)
+- timestamp: approximate video timestamp (e.g. "0:30", "2:15")
+- description: 1-2 sentences of what to do
+
+Return ONLY a valid JSON array with no extra text. Example:
+[{"step_number":0,"step_name":"Gather ingredients","timestamp":"0:00","description":"Get all ingredients ready on the counter."}]
+
+If this is NOT a cooking tutorial video, return exactly this text with no quotes: its not a tutorial video!`;
 const HOW_TO_SYSTEM_PROMPT = `Act as a professional illustrator. I have uploaded a reference image, and the goal to teach is: TASK_PLACEHOLDER.
 
 Create a clean, highly simplified 4-step illustrated infographic that teaches this goal. Design a horizontal landscape graphic layout divided into four clear, sequential sections from left to right (Step 1, Step 2, Step 3, Step 4).
@@ -76,6 +91,44 @@ function base64ToArrayBuffer(base64) {
 
 const EMPTY_SLOT = { type: "empty", data: {}, context: null, active: false };
 
+const TUTORIAL_LOADING_STAGES = [
+  { label: "Finding YouTube video", icon: "🔍" },
+  { label: "Watching the tutorial", icon: "▶️" },
+  { label: "Understanding the steps", icon: "🧠" },
+  { label: "Setting up your plan", icon: "📋" },
+];
+
+function TutorialLoadingStages({ stage }) {
+  return (
+    <div className="flex flex-col gap-3 w-full max-w-xs">
+      {TUTORIAL_LOADING_STAGES.map((s, i) => {
+        const done = i < stage;
+        const active = i === stage;
+        return (
+          <div key={i} className={`flex items-center gap-3 transition-opacity duration-300 ${i > stage ? "opacity-30" : "opacity-100"}`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs transition-all duration-300
+              ${done ? "bg-accent-green" : active ? "bg-text-primary" : "bg-border"}`}>
+              {done ? (
+                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : active ? (
+                <svg className="w-3 h-3 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+              ) : null}
+            </div>
+            <span className={`text-sm ${done ? "text-text-secondary line-through" : active ? "text-text-primary font-semibold" : "text-text-secondary"}`}>
+              {s.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function buildInjectionText(result) {
   if (result.type === "find_object") {
     return result.found
@@ -107,6 +160,17 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [widgets, setWidgets] = useState([EMPTY_SLOT, EMPTY_SLOT, EMPTY_SLOT]);
   const [isCapturing, setIsCapturing] = useState(false);
+
+  // Tutorial state
+  const [tutorialSteps, setTutorialSteps] = useState([]);
+  const [currentStepIndex, setCurrentStepIndex] = useState(-1);
+  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [tutorialLoading, setTutorialLoading] = useState(false);
+  const [tutorialLoadingStage, setTutorialLoadingStage] = useState(0);
+  const [tutorialError, setTutorialError] = useState("");
+  const tutorialStepsRef = useRef([]);
+  const currentStepIndexRef = useRef(-1);
+  const pendingTutorialStepsRef = useRef(null);
 
   const addLog = useCallback((level, msg) => {
     setLogs((prev) => [...prev.slice(-200), { time: ts(), level, msg }]);
@@ -191,6 +255,39 @@ export default function App() {
   }, [setVoiceStateSync, processQueue]);
 
   const captureFrameRef = useRef(null);
+
+  const analyzeTutorial = useCallback(async (url) => {
+    try {
+      const response = await geminiAI.models.generateContent({
+        model: TUTORIAL_MODEL,
+        contents: [{
+          role: "user",
+          parts: [
+            { fileData: { fileUri: url, mimeType: "video/mp4" } },
+            { text: TUTORIAL_SYSTEM_PROMPT },
+          ],
+        }],
+      });
+
+      const text = response.text?.trim();
+      if (!text) {
+        setTutorialError("Could not analyze the video. Try again.");
+        return null;
+      }
+
+      if (text === "its not a tutorial video!") {
+        setTutorialError("its not a tutorial video!");
+        return null;
+      }
+
+      const steps = JSON.parse(text);
+      return steps;
+    } catch (err) {
+      addLog("error", `Tutorial analysis failed: ${err.message}`);
+      setTutorialError("Failed to analyze the video. Check the URL and try again.");
+      return null;
+    }
+  }, [addLog]);
 
   const onToolCall = useCallback(
     (fc, session) => {
@@ -585,6 +682,64 @@ Only mark as visible if you can clearly see it.`,
           }
         })();
       }
+
+      if (fc.name === "set_goals") {
+        const { steps } = fc.args;
+        tutorialStepsRef.current = steps;
+        currentStepIndexRef.current = 0;
+        setTutorialSteps(steps);
+        setCurrentStepIndex(0);
+        session.sendToolResponse({
+          functionResponses: [{
+            id: fc.id, name: fc.name,
+            response: { output: `Tutorial set! ${steps.length} steps. Step 1: ${steps[0]?.step_name}.` }
+          }],
+        });
+      }
+
+      if (fc.name === "check_current_step") {
+        const idx = currentStepIndexRef.current;
+        const step = tutorialStepsRef.current[idx];
+        const total = tutorialStepsRef.current.length;
+        session.sendToolResponse({
+          functionResponses: [{
+            id: fc.id, name: fc.name,
+            response: { output: step
+              ? `Currently on step ${idx + 1} of ${total}: "${step.step_name}". ${step.description}`
+              : "No tutorial loaded." }
+          }],
+        });
+      }
+
+      if (fc.name === "check_next_step") {
+        const nextIdx = currentStepIndexRef.current + 1;
+        const next = tutorialStepsRef.current[nextIdx];
+        const total = tutorialStepsRef.current.length;
+        session.sendToolResponse({
+          functionResponses: [{
+            id: fc.id, name: fc.name,
+            response: { output: next
+              ? `Next is step ${nextIdx + 1} of ${total}: "${next.step_name}". ${next.description}`
+              : "Already on the last step!" }
+          }],
+        });
+      }
+
+      if (fc.name === "next_step") {
+        const newIdx = Math.min(
+          currentStepIndexRef.current + 1,
+          tutorialStepsRef.current.length - 1
+        );
+        currentStepIndexRef.current = newIdx;
+        setCurrentStepIndex(newIdx);
+        const step = tutorialStepsRef.current[newIdx];
+        session.sendToolResponse({
+          functionResponses: [{
+            id: fc.id, name: fc.name,
+            response: { output: `Now on step ${newIdx + 1}: ${step?.step_name}.` }
+          }],
+        });
+      }
     },
     [addLog, enqueueResult]
   );
@@ -601,6 +756,17 @@ Only mark as visible if you can clearly see it.`,
   // Keep a ref to gemini for use in callbacks
   const geminiRef = useRef(gemini);
   useEffect(() => { geminiRef.current = gemini; }, [gemini]);
+
+  // Inject tutorial steps once the Live session is connected
+  useEffect(() => {
+    if (gemini.status === "connected" && pendingTutorialStepsRef.current) {
+      const steps = pendingTutorialStepsRef.current;
+      pendingTutorialStepsRef.current = null;
+      geminiRef.current?.sendText(
+        `[TUTORIAL_LOADED] I've analyzed your tutorial. It has ${steps.length} steps: ${JSON.stringify(steps)}. Please call set_goals now with these steps.`
+      );
+    }
+  }, [gemini.status]);
 
   const onTimerDone = useCallback((label) => {
     addLog("info", `Timer done: ${label}`);
@@ -653,6 +819,24 @@ Only mark as visible if you can clearly see it.`,
   }, [addLog]);
 
   const handleStart = async () => {
+    setTutorialError("");
+
+    if (youtubeUrl) {
+      setTutorialLoading(true);
+      setTutorialLoadingStage(0);
+
+      const STAGE_DELAYS = [1800, 3500, 5500]; // ms to advance to stages 1, 2, 3
+      const stageTimers = STAGE_DELAYS.map((delay, i) =>
+        setTimeout(() => setTutorialLoadingStage(i + 1), delay)
+      );
+
+      const steps = await analyzeTutorial(youtubeUrl);
+      stageTimers.forEach(clearTimeout);
+      setTutorialLoading(false);
+      if (!steps) return; // tutorialError already set
+      pendingTutorialStepsRef.current = steps;
+    }
+
     setStarted(true);
     addLog("info", "Starting...");
 
@@ -692,12 +876,32 @@ Only mark as visible if you can clearly see it.`,
           Sigma
         </h1>
         <p className="text-text-secondary text-lg">Your hands-free cooking companion</p>
-        <button
-          onClick={handleStart}
-          className="mt-4 px-8 py-3 bg-text-primary hover:bg-black text-white font-semibold text-base rounded-full transition-colors"
-        >
-          Start Cooking
-        </button>
+
+        {tutorialLoading ? (
+          <TutorialLoadingStages stage={tutorialLoadingStage} />
+        ) : (
+          <>
+            <div className="flex flex-col items-center gap-2 w-full max-w-sm">
+              <input
+                type="url"
+                value={youtubeUrl}
+                onChange={(e) => { setYoutubeUrl(e.target.value); setTutorialError(""); }}
+                placeholder="Paste a YouTube tutorial link (optional)"
+                className="w-full px-4 py-2.5 rounded-full border border-border bg-card text-text-primary text-sm placeholder-text-secondary focus:outline-none focus:border-text-primary transition-colors"
+              />
+              {tutorialError && (
+                <p className="text-accent-red text-xs text-center">{tutorialError}</p>
+              )}
+            </div>
+
+            <button
+              onClick={handleStart}
+              className="px-8 py-3 bg-text-primary hover:bg-black text-white font-semibold text-base rounded-full transition-colors"
+            >
+              Start Cooking
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -720,7 +924,7 @@ Only mark as visible if you can clearly see it.`,
         className="w-full max-w-[1440px]"
         style={{
           aspectRatio: "16 / 9",
-          maxHeight: "calc(100vh - 120px)",
+          maxHeight: tutorialSteps.length > 0 ? "calc(100vh - 220px)" : "calc(100vh - 120px)",
         }}
       >
         <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-3">
@@ -730,6 +934,11 @@ Only mark as visible if you can clearly see it.`,
           ))}
         </div>
       </div>
+
+      {/* Tutorial progress bar — below grid so it's never clipped by browser chrome */}
+      {tutorialSteps.length > 0 && (
+        <TutorialProgressBar steps={tutorialSteps} currentIndex={currentStepIndex} />
+      )}
 
       {/* Voice indicator below container */}
       <div className="w-full max-w-md">

@@ -46,7 +46,18 @@ BACKGROUND TASKS:
 - Sometimes you will receive a text message starting with [BACKGROUND_RESULT]. This means a background sub-agent has finished processing a task you previously dispatched (like finding an object or looking up substitutes).
 - Treat [BACKGROUND_RESULT] messages as information to naturally announce to the user — NOT as user speech.
 - Announce the result in 1-2 sentences, casual and warm: "Oh nice, found your ginger — it's upper-right!" or "For the margarine — unsalted butter works great, 1:1!"
-- Keep it brief. The user is cooking. Never mention the system mechanism — just speak the content naturally.`;
+- Keep it brief. The user is cooking. Never mention the system mechanism — just speak the content naturally.
+
+TUTORIAL GUIDANCE:
+- set_goals: When you receive a [TUTORIAL_LOADED] message, IMMEDIATELY call set_goals with the steps array from the message. Then announce: "Tutorial loaded! We have X steps. Let's start with Step 1!"
+- check_current_step: Call when user asks "what step am I on?" or "what are we doing now?"
+- When user says "next step", "I'm done", "done with this", "move on":
+  1. Call check_current_step to get current
+  2. Call check_next_step to preview next
+  3. Announce: "Great! Next is Step N: [step_name]. [brief description]"
+  4. Call next_step to advance the state
+- Keep step announcements brief — user is hands-busy. Max 2 sentences.
+- check_next_step: Call when user asks "what's next?"`;
 
 const TOOLS = [
   {
@@ -110,6 +121,44 @@ const TOOLS = [
           },
           required: ["task"],
         },
+      },
+      {
+        name: "set_goals",
+        description: "Save the tutorial step list and start tracking progress at step 0. Call immediately when a [TUTORIAL_LOADED] message arrives.",
+        parameters: {
+          type: "object",
+          properties: {
+            steps: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  step_number: { type: "integer" },
+                  step_name: { type: "string" },
+                  timestamp: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["step_number", "step_name", "timestamp", "description"],
+              },
+            },
+          },
+          required: ["steps"],
+        },
+      },
+      {
+        name: "check_current_step",
+        description: "Get the current tutorial step the user is on.",
+        parameters: { type: "object", properties: {} },
+      },
+      {
+        name: "check_next_step",
+        description: "Get the next tutorial step (without advancing).",
+        parameters: { type: "object", properties: {} },
+      },
+      {
+        name: "next_step",
+        description: "Advance to the next tutorial step. Call after announcing the next step to the user.",
+        parameters: { type: "object", properties: {} },
       },
     ],
   },
