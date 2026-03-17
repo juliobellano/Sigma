@@ -16,7 +16,7 @@ const TTS_MODEL = "gemini-2.5-flash-preview-tts";
 const HOW_TO_MODEL = "gemini-3.1-flash-image-preview";
 const TUTORIAL_MODEL = "gemini-3.1-pro-preview";
 
-const TUTORIAL_SYSTEM_PROMPT = `Analyze this YouTube cooking tutorial video and extract all the cooking steps as a JSON array.
+const TUTORIAL_SYSTEM_PROMPT = `Analyze this tutorial video and extract all the steps as a JSON array.
 
 For each step include:
 - step_number: integer starting at 0
@@ -25,9 +25,7 @@ For each step include:
 - description: 1-2 sentences of what to do
 
 Return ONLY a valid JSON array with no extra text. Example:
-[{"step_number":0,"step_name":"Gather ingredients","timestamp":"0:00","description":"Get all ingredients ready on the counter."}]
-
-If this is NOT a cooking tutorial video, return exactly this text with no quotes: its not a tutorial video!`;
+[{"step_number":0,"step_name":"Gather materials","timestamp":"0:00","description":"Get all necessary materials ready."}]`;
 const HOW_TO_SYSTEM_PROMPT = `Act as a professional illustrator. I have uploaded a reference image, and the goal to teach is: TASK_PLACEHOLDER.
 
 Create a clean, highly simplified 4-step illustrated infographic that teaches this goal. Design a horizontal landscape graphic layout divided into four clear, sequential sections from left to right (Step 1, Step 2, Step 3, Step 4).
@@ -215,7 +213,7 @@ export default function App() {
               prebuiltVoiceConfig: { voiceName: "Kore" },
             },
           },
-          systemInstruction: "You are Sigma, a warm, cheerful, and encouraging cooking companion. Speak casually like a supportive best friend in the kitchen — brief, upbeat, and natural. Never sound robotic.",
+          systemInstruction: "You are Sigma, a warm, cheerful, and encouraging tutorial companion. Speak casually like a supportive best friend — brief, upbeat, and natural. Never sound robotic.",
         },
       });
 
