@@ -50,7 +50,7 @@ Now unlocked to guide through any YouTube tutorial.
 
 | Tool | Trigger | What Happens |
 |---|---|---|
-| `set_timer` | "set a 5 minute timer" | Countdown widget + TTS on completion |
+| `set_timer` | "set a 5 minute timer" | Countdown widget |
 | `find_object` | "where's the garlic?" | Camera → bbox detection → overlay |
 | `find_substitute` | "I'm out of lemongrass" | Google Search grounding + camera check |
 | `how_to` | "how do I dice an onion?" | Illustrated 4-step guide generated |
@@ -134,9 +134,6 @@ flowchart TB
             TUTORIAL_MODEL["Gemini 3.1 Pro Preview<br/><i>Full YouTube video<br/>multimodal understanding</i>"]
         end
 
-        subgraph TTS_AGENT["🔊 TTS Agent"]
-            TTS_MODEL["Gemini 2.5 Flash TTS<br/><i>Bypasses live session</i>"]
-        end
     end
 
     MIC -- "PCM 16kHz" --> AUDIO_HOOK
@@ -156,7 +153,6 @@ flowchart TB
     DISPATCH -. "REST async" .-> BBOX_MODEL
     DISPATCH -. "REST async" .-> SUB_MODEL
     DISPATCH -. "REST async" .-> HOWTO_MODEL
-    DISPATCH -. "REST async" .-> TTS_MODEL
     DISPATCH -. "REST async" .-> TUTORIAL_MODEL
 
     style USER fill:#f9fafb,stroke:#d1d5db,color:#111
@@ -167,7 +163,6 @@ flowchart TB
     style SUB_AGENT fill:#fef3c7,stroke:#f59e0b,color:#111
     style HOWTO_AGENT fill:#ffe4e6,stroke:#fb7185,color:#111
     style TUTORIAL_AGENT fill:#dbeafe,stroke:#3b82f6,color:#111
-    style TTS_AGENT fill:#f3e8ff,stroke:#a78bfa,color:#111
     style HOOKS fill:#ecfdf5,stroke:#6ee7b7,color:#111
     style ORCHESTRATOR fill:#ecfdf5,stroke:#6ee7b7,color:#111
     style WIDGETS fill:#ecfdf5,stroke:#6ee7b7,color:#111
@@ -410,8 +405,6 @@ For **Tutorial Mode**: paste a YouTube URL on the splash screen before starting.
 ---
 
 ## What I Learned
-
-**Real-time audio is unforgiving.** Gemini expects consistent 16kHz PCM chunks. AudioWorklet processors, ring buffers, and Float32↔Int16 conversion on both ends were all required.
 
 **Background tasks + result injection is the key pattern.** Respond immediately, run heavy tasks async, inject results as `[BACKGROUND_RESULT]` on the next idle turn. Conversation never blocks.
 
