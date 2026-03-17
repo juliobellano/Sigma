@@ -312,14 +312,14 @@ Google Search grounding is used for the `find_substitute` tool — a Google Clou
 **Multi-model orchestration requires clear handoffs.** Each secondary model has a different output format (bounding boxes, JPEG images, PCM audio, JSON arrays). Building a clean tool dispatch layer in `App.jsx` with a result queue prevents race conditions between concurrent tool calls.
 
 ---
-
+```mermaid
 flowchart TB
     subgraph USER["🎤 User Hardware"]
         MIC[Microphone]
         CAM[Camera]
         SPK[Speaker]
     end
-
+ 
     subgraph CLIENT["⚛️ Browser Client — React + Vite"]
         direction TB
         APP["<b>App.jsx</b><br/>Orchestrator + Tool Dispatch"]
@@ -328,14 +328,14 @@ flowchart TB
         CAMERA["useCamera<br/><i>1 FPS JPEG capture</i>"]
         WIDGETS["WidgetManager<br/><i>3 dynamic slots</i>"]
         QUEUE["Result Queue<br/><i>Async → re-inject</i>"]
-
+ 
         APP --- GEMINI_HOOK
         APP --- AUDIO
         APP --- CAMERA
         APP --- WIDGETS
         APP --- QUEUE
     end
-
+ 
     subgraph GEMINI["☁️ Gemini Cloud APIs"]
         LIVE["<b>Live 2.5 Flash</b><br/>WebSocket · native audio<br/><i>Conductor model</i>"]
         FLASH["<b>3 Flash Preview</b><br/>Vision + BBox + Search"]
@@ -344,20 +344,20 @@ flowchart TB
         TTS["<b>2.5 Flash TTS</b><br/>Timer announcements"]
         SEARCH["Google Search<br/><i>Grounding</i>"]
     end
-
+ 
     MIC -- "PCM 16kHz" --> AUDIO
     CAM -- "JPEG 768px" --> CAMERA
     AUDIO -- "PCM 24kHz" --> SPK
-
+ 
     GEMINI_HOOK <== "WebSocket<br/>(bidirectional)" ==> LIVE
     APP -. "REST (async)" .-> FLASH
     APP -. "REST (async)" .-> IMAGE
     APP -. "REST (async)" .-> TTS
     APP -. "REST (async)" .-> PRO
     FLASH -. "grounding" .-> SEARCH
-
+ 
     QUEUE -- "[BACKGROUND_RESULT]<br/>re-inject on idle" --> GEMINI_HOOK
-
+ 
     style USER fill:#f8f8f8,stroke:#ddd,color:#333
     style CLIENT fill:#f0fdf4,stroke:#86efac,color:#333
     style GEMINI fill:#faf5ff,stroke:#c4b5fd,color:#333
@@ -367,6 +367,37 @@ flowchart TB
     style PRO fill:#ccfbf1,stroke:#14b8a6,color:#333
     style TTS fill:#fef3c7,stroke:#f59e0b,color:#333
     style APP fill:#dcfce7,stroke:#22c55e,color:#333
+```
+ 
+### Tool dispatch flow
+ 
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant S as 🧠 Sigma (Live 2.5 Flash)
+    participant O as ⚙️ Orchestrator
+    participant A as 🔍 Sub-Agent
+    participant W as 📊 Widget
+ 
+    U->>S: "Where's the fish sauce?"
+    S->>O: toolCall: find_object("fish sauce")
+    O->>S: ⚡ Immediate response:<br/>"Searching..."
+    Note over S: Unblocked — keeps talking
+ 
+    O->>W: Show loading widget
+    O->>A: async REST → 3 Flash Preview<br/>(camera frame + bbox prompt)
+ 
+    Note over A: ~2-4s processing
+ 
+    A-->>O: BBox results + annotated image
+    O->>W: loading → bbox result
+    O->>O: Enqueue result
+ 
+    Note over O: Wait for conductor idle<br/>(onTurnComplete)
+ 
+    O->>S: [BACKGROUND_RESULT]<br/>"Found fish sauce — highlighted"
+    S->>U: 🔊 "Found your fish sauce —<br/>it's right there on the left!"
+```
 
 ## License
 
