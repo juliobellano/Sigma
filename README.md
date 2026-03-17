@@ -8,10 +8,12 @@
 [![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react)](https://react.dev)
 
 ---
-
+#GeminiLiveAgentChallenge
 ## What is Sigma?
 
-Sigma is a real-time, multimodal AI cooking assistant that lives in your browser. Your hands are covered in flour — you can't type. Your eyes are on the pan — you can't read a recipe. Sigma listens, watches, and responds with **voice + vision**, no screen touching required.
+At first Sigma is a real-time, multimodal AI cooking assistant that lives in your browser. Your hands are covered in flour — you can't type. Your eyes are on the pan — you can't read a recipe. Sigma listens, watches, and responds with **voice + vision**, no screen touching required.
+
+Now, it is unlocked to guide through any kind of tutorials in youtube.
 
 Ask it to set a timer. Ask it where the fish sauce is. Ask it what to substitute for lemongrass. Ask it to show you how to julienne carrots. Sigma sees your kitchen through your camera and talks back in under a second — exactly like a chef standing next to you.
 
@@ -47,7 +49,6 @@ Sigma breaks the text-box paradigm by combining **bidirectional audio streaming*
 ### Real-Time Voice Interaction
 - Bidirectional audio via Gemini Live API (`gemini-2.5-flash-native-audio-preview-12-2025`)
 - 16 kHz PCM microphone input via AudioWorklet — zero latency
-- 24 kHz PCM speaker output with ring-buffer smoothing
 - Barge-in detection: interrupt Sigma mid-sentence naturally
 - Session resumption: conversation context survives page refresh
 - Both input and output transcribed in real-time
@@ -80,8 +81,8 @@ Five specialized Gemini models work in concert behind the scenes:
 | `gemini-2.5-flash-native-audio-preview-12-2025` | Primary: voice conversation + tool calling + vision reasoning |
 | `gemini-3-flash-preview` | Object localization using Gemini's native bounding box output — returns `[y, x, y, x]` coordinates on a 0–1000 scale, drawn onto the camera frame client-side |
 | `gemini-3.1-flash-image-preview` | Generate illustrated 4-step how-to guides from the live camera frame |
-| `gemini-2.5-flash-preview-tts` | TTS announcements for timer completions |
-| `gemini-3.1-pro-preview` | YouTube cooking tutorial step extraction |
+| `gemini-2.5-flash-preview-tts` | TTS announcements for timer completions | 
+| `gemini-3.1-pro-preview` | Leverage the multimodal capabilities to understand tutorial videos for step extraction |
 
 ### Tutorial Mode
 Paste a YouTube cooking video URL at the splash screen. Sigma sends the video to Gemini, extracts all steps as structured JSON, and loads them into a visual progress bar. Navigate steps hands-free with voice commands.
