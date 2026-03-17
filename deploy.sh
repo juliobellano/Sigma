@@ -4,7 +4,7 @@ set -e
 PROJECT_ID=$(gcloud config get-value project)
 REGION="us-central1"
 SERVICE="sigma"
-IMAGE="gcr.io/$PROJECT_ID/$SERVICE:latest"
+IMAGE="us-central1-docker.pkg.dev/$PROJECT_ID/$SERVICE/$SERVICE:latest"
 API_KEY=$(grep VITE_GEMINI_API_KEY .env | cut -d= -f2)
 
 echo "Enabling required services..."

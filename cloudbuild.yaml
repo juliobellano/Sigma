@@ -5,7 +5,7 @@ steps:
   - '--build-arg'
   - 'VITE_GEMINI_API_KEY=$_VITE_GEMINI_API_KEY'
   - '-t'
-  - 'gcr.io/$PROJECT_ID/sigma:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/sigma/sigma:latest'
   - '.'
 images:
-- 'gcr.io/$PROJECT_ID/sigma:latest'
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/sigma/sigma:latest'
