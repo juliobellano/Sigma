@@ -1,6 +1,6 @@
-# Sigma — Hands-Free AI Cooking Companion
+# Sigma - Hands-Free AI Cooking Companion
 
-> **Gemini Live Agent Challenge — Live Agents Category**
+> **Gemini Live Agent Challenge - Live Agents Category**
 
 [![Live Agents](https://img.shields.io/badge/Category-Live%20Agents-4285F4?style=flat-square&logo=google)](https://geminiliveagentchallenge.devpost.com)
 [![Gemini Live API](https://img.shields.io/badge/Gemini-Live%20API-34A853?style=flat-square&logo=google)](https://ai.google.dev)
@@ -13,7 +13,7 @@
 
 ## What is Sigma?
 
-A real-time, multimodal AI cooking assistant that lives in your browser. Your hands are covered in flour — you can't type. Your eyes are on the pan — you can't read a recipe. Sigma listens, watches, and responds with **voice + vision**, no screen touching required.
+A real-time, multimodal AI cooking assistant that lives in your browser. Your hands are covered in flour - you can't type. Your eyes are on the pan - you can't read a recipe. Sigma listens, watches, and responds with **voice + vision**, no screen touching required.
 
 Now unlocked to guide through any YouTube tutorial.
 
@@ -42,7 +42,7 @@ Now unlocked to guide through any YouTube tutorial.
 ## Features
 
 ### Voice + Vision
-- Bidirectional audio via Gemini Live API — 16kHz PCM in, 24kHz out via AudioWorklet
+- Bidirectional audio via Gemini Live API
 - Barge-in detection, session resumption, real-time transcription
 - 1 FPS camera feed streamed to Gemini for continuous kitchen awareness
 
