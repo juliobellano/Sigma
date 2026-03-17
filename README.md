@@ -23,7 +23,7 @@ Now unlocked to guide through any YouTube tutorial.
 
 ## Demo
 
-> 📹 [Watch the 3-minute demo](https://youtu.be/B17bBNdpYOs)
+> 📹 [Watch the 3-minute demo](<!-- add video link here -->)
 
 ---
 
@@ -341,6 +341,7 @@ stateDiagram-v2
 | **Google Search grounding** | Real-time web data — recipes change, training data doesn't |
 | **3.1 Flash for substitutes** | Fast enough — "what replaces X" doesn't need reasoning |
 | **3.1 Pro for tutorials** | Only model that watches full YouTube video multimodally |
+| **Separate TTS agent** | Timer announcements fire even mid-conversation |
 | **Result injection queue** | Sub-agent results wait for idle — no mid-sentence interrupts |
 | **3-slot widget system** | `empty → loading → result → auto-dismiss` lifecycle |
 
