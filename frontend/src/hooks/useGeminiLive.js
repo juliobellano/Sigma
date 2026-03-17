@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GoogleGenAI } from "@google/genai";
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+const MODEL = "gemini-live-2.5-flash-native-audio";
 
 const SYSTEM_INSTRUCTION = `You are Sigma, a warm, patient, and encouraging cooking companion.
 
