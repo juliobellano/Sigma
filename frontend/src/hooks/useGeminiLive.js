@@ -20,6 +20,12 @@ BEHAVIOR:
 - Always confirm actions clearly
 - If you're not sure about something, say so honestly
 
+WHEN TO RESPOND:
+- ONLY respond when directly addressed or when something clearly requires your input.
+- Respond when: the user says "hey Sigma", "hey Gemini", or calls your name; asks a question (what, where, how, when, why, can you, do you, etc.); gives you a direct instruction or request; a safety situation occurs (smoke, burning, overflow).
+- Stay SILENT when: the user is talking to themselves, thinking out loud, narrating what they're doing ("okay now I'm gonna add the onions"), or having a side conversation with someone else in the room.
+- If in doubt, stay silent. It's better to miss a casual comment than to interrupt someone who wasn't talking to you.
+
 You can see through the user's camera and hear them speak. They are cooking hands-free, so keep things brief and helpful.
 
 CAPABILITIES:
@@ -41,6 +47,9 @@ CAPABILITIES:
 - how_to: Generate a visual 4-step illustrated guide for a cooking technique.
 - IMPORTANT: Call how_to whenever the user asks HOW to do something (dice, slice, fold, debone, zest, etc.). Examples: "how do I dice an onion?", "show me how to julienne", "how do I fold an egg white?".
 - After calling how_to, you will receive a [BACKGROUND_RESULT] with a short description. Read it naturally and mention the guide is on screen.
+
+- list_item: Show a widget listing all items/tools needed for the current step with their amounts.
+- IMPORTANT: Call list_item when the user asks "what do I need?", "what items do I need?", "list the ingredients", "what tools do I need for this step?" or similar. Use the tutorial step context to generate the full list. If an amount isn't mentioned, use "N/A".
 
 BACKGROUND TASKS:
 - Sometimes you will receive a text message starting with [BACKGROUND_RESULT]. This means a background sub-agent has finished processing a task you previously dispatched (like finding an object or looking up substitutes).
@@ -123,6 +132,28 @@ const TOOLS = [
         },
       },
       {
+        name: "list_item",
+        description: "Display a widget listing all items and tools needed for a tutorial step, with amounts.",
+        parameters: {
+          type: "object",
+          properties: {
+            step_name: { type: "string", description: "The step name, e.g. 'Cut Chicken'" },
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string", description: "Item or tool name" },
+                  amount: { type: "string", description: "Quantity or measurement. Use 'N/A' if not specified." },
+                },
+                required: ["name", "amount"],
+              },
+            },
+          },
+          required: ["step_name", "items"],
+        },
+      },
+      {
         name: "set_goals",
         description: "Save the tutorial step list and start tracking progress at step 0. Call immediately when a [TUTORIAL_LOADED] message arrives.",
         parameters: {
@@ -164,9 +195,13 @@ const TOOLS = [
   },
 ];
 
-export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, onTurnComplete, onToolCall, onLog }) {
+export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, onTurnComplete, onToolCall, onLog, onSetupComplete }) {
   const sessionRef = useRef(null);
   const [status, setStatus] = useState("disconnected"); // disconnected | connecting | connected
+  const shouldReconnectRef = useRef(false);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const connectRef = useRef(null);
 
   const connect = useCallback(async () => {
     if (sessionRef.current) return;
@@ -175,6 +210,7 @@ export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, on
       return;
     }
 
+    shouldReconnectRef.current = true;
     setStatus("connecting");
     onLog?.("info", "Connecting to Gemini Live...");
 
@@ -198,11 +234,13 @@ export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, on
         callbacks: {
           onopen: () => {
             setStatus("connected");
+            reconnectAttemptsRef.current = 0;
             onLog?.("info", "Gemini Live connected");
           },
           onmessage: (message) => {
             if (message.setupComplete) {
               onLog?.("info", "Setup complete");
+              onSetupComplete?.();
               return;
             }
 
@@ -246,11 +284,9 @@ export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, on
             // Transcriptions
             if (content.inputTranscription?.text) {
               onTranscript?.("user", content.inputTranscription.text);
-              onLog?.("recv", `transcript [user]: ${content.inputTranscription.text}`);
             }
             if (content.outputTranscription?.text) {
               onTranscript?.("assistant", content.outputTranscription.text);
-              onLog?.("recv", `transcript [assistant]: ${content.outputTranscription.text}`);
             }
           },
           onerror: (error) => {
@@ -260,6 +296,19 @@ export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, on
             setStatus("disconnected");
             sessionRef.current = null;
             onLog?.("info", `Gemini disconnected${event.reason ? `: ${event.reason}` : ""}`);
+
+            if (shouldReconnectRef.current) {
+              const MAX = 5;
+              reconnectAttemptsRef.current += 1;
+              if (reconnectAttemptsRef.current <= MAX) {
+                const delay = Math.min(reconnectAttemptsRef.current * 1500, 8000);
+                onLog?.("warn", `Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${reconnectAttemptsRef.current}/${MAX})…`);
+                reconnectTimerRef.current = setTimeout(() => connectRef.current?.(), delay);
+              } else {
+                onLog?.("error", "Max reconnect attempts reached. Reload to retry.");
+                shouldReconnectRef.current = false;
+              }
+            }
           },
         },
       });
@@ -272,6 +321,8 @@ export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, on
   }, [onAudio, onTranscript, onInterrupted, onTurnComplete, onLog]);
 
   const disconnect = useCallback(() => {
+    shouldReconnectRef.current = false;
+    clearTimeout(reconnectTimerRef.current);
     sessionRef.current?.close();
     sessionRef.current = null;
     setStatus("disconnected");
@@ -297,9 +348,14 @@ export default function useGeminiLive({ onAudio, onTranscript, onInterrupted, on
     sessionRef.current?.sendClientContent({ turns: { parts: [{ text }] }, turnComplete: true });
   }, []);
 
+  // Keep connectRef in sync for use inside onclose callback
+  useEffect(() => { connectRef.current = connect; }, [connect]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      shouldReconnectRef.current = false;
+      clearTimeout(reconnectTimerRef.current);
       sessionRef.current?.close();
       sessionRef.current = null;
     };

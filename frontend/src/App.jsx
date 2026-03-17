@@ -188,6 +188,7 @@ export default function App() {
   const tutorialStepsRef = useRef([]);
   const currentStepIndexRef = useRef(-1);
   const pendingTutorialStepsRef = useRef(null);
+  const pendingInjectRef = useRef(null);
 
   const addLog = useCallback((level, msg) => {
     setLogs((prev) => [...prev.slice(-200), { time: ts(), level, msg }]);
@@ -273,8 +274,16 @@ export default function App() {
 
   const captureFrameRef = useRef(null);
 
+  function normalizeYouTubeUrl(url) {
+    const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]+)/);
+    if (shortMatch) return `https://www.youtube.com/watch?v=${shortMatch[1]}`;
+    return url;
+  }
+
   const analyzeTutorial = useCallback(async (url) => {
     try {
+      addLog("send", `[tutorial] model=${TUTORIAL_MODEL} url=${url}`);
+
       const response = await geminiAI.models.generateContent({
         model: TUTORIAL_MODEL,
         contents: [{
@@ -287,6 +296,8 @@ export default function App() {
       });
 
       const text = response.text?.trim();
+      addLog("recv", `[tutorial] response: ${text?.slice(0, 300)}${text?.length > 300 ? "…" : ""}`);
+
       if (!text) {
         setTutorialError("Could not analyze the video. Try again.");
         return null;
@@ -298,6 +309,7 @@ export default function App() {
       }
 
       const steps = JSON.parse(text);
+      addLog("recv", `[tutorial] parsed ${steps.length} steps`);
       return steps;
     } catch (err) {
       addLog("error", `Tutorial analysis failed: ${err.message}`);
@@ -700,16 +712,58 @@ Only mark as visible if you can clearly see it.`,
         })();
       }
 
+      if (fc.name === "list_item") {
+        const { step_name, items } = fc.args || {};
+        addLog("info", `Tool: list_item("${step_name}", ${items?.length} items)`);
+
+        let placed = false;
+        setWidgets((prev) => {
+          const slot = prev.findIndex((w) => w.type === "empty");
+          if (slot === -1) return prev;
+          placed = true;
+          const next = [...prev];
+          next[slot] = { type: "item_list", data: { step_name, items }, context: null, active: true };
+          return next;
+        });
+
+        setTimeout(() => {
+          session.sendToolResponse({
+            functionResponses: [{ id: fc.id, name: fc.name, response: {
+              output: placed
+                ? `Showing ${items?.length} items for "${step_name}" on screen.`
+                : "All widget slots are in use. Tell the user to wait for a widget to close.",
+            }}],
+          });
+
+          if (placed) {
+            setTimeout(() => {
+              setWidgets((prev) =>
+                prev.map((w) =>
+                  w.type === "item_list" && w.data?.step_name === step_name ? EMPTY_SLOT : w
+                )
+              );
+            }, 20000);
+          }
+        }, 0);
+      }
+
       if (fc.name === "set_goals") {
         const { steps } = fc.args;
+        const isReconnect = tutorialStepsRef.current.length > 0;
         tutorialStepsRef.current = steps;
-        currentStepIndexRef.current = 0;
+        if (!isReconnect) {
+          currentStepIndexRef.current = 0;
+          setCurrentStepIndex(0);
+        }
         setTutorialSteps(steps);
-        setCurrentStepIndex(0);
+        const idx = currentStepIndexRef.current;
         session.sendToolResponse({
           functionResponses: [{
             id: fc.id, name: fc.name,
-            response: { output: `Tutorial set! ${steps.length} steps. Step 1: ${steps[0]?.step_name}.` }
+            response: { output: isReconnect
+              ? `Tutorial restored! ${steps.length} steps. Currently on step ${idx + 1}: ${steps[idx]?.step_name}.`
+              : `Tutorial set! ${steps.length} steps. Step 1: ${steps[0]?.step_name}.`
+            }
           }],
         });
       }
@@ -750,6 +804,8 @@ Only mark as visible if you can clearly see it.`,
         currentStepIndexRef.current = newIdx;
         setCurrentStepIndex(newIdx);
         const step = tutorialStepsRef.current[newIdx];
+        // Dismiss any ingredient list — user is moving on
+        setWidgets((prev) => prev.map((w) => w.type === "item_list" ? EMPTY_SLOT : w));
         session.sendToolResponse({
           functionResponses: [{
             id: fc.id, name: fc.name,
@@ -761,6 +817,22 @@ Only mark as visible if you can clearly see it.`,
     [addLog, enqueueResult]
   );
 
+  const onSetupComplete = useCallback(() => {
+    if (pendingInjectRef.current) {
+      const text = pendingInjectRef.current;
+      pendingInjectRef.current = null;
+      pendingTutorialStepsRef.current = null;
+      geminiRef.current?.sendText(text);
+    } else if (tutorialStepsRef.current.length > 0) {
+      // Reconnect — restore context
+      const steps = tutorialStepsRef.current;
+      const idx = currentStepIndexRef.current;
+      geminiRef.current?.sendText(
+        `[TUTORIAL_RESUMED] Session reconnected. The tutorial has ${steps.length} steps: ${JSON.stringify(steps)}. The user is currently on step ${idx + 1}: "${steps[idx]?.step_name}". Please call set_goals to restore your tool state, then briefly acknowledge you're back.`
+      );
+    }
+  }, []);
+
   const gemini = useGeminiLive({
     onAudio,
     onTranscript,
@@ -768,22 +840,13 @@ Only mark as visible if you can clearly see it.`,
     onTurnComplete,
     onToolCall,
     onLog: addLog,
+    onSetupComplete,
   });
 
   // Keep a ref to gemini for use in callbacks
   const geminiRef = useRef(gemini);
   useEffect(() => { geminiRef.current = gemini; }, [gemini]);
 
-  // Inject tutorial steps once the Live session is connected
-  useEffect(() => {
-    if (gemini.status === "connected" && pendingTutorialStepsRef.current) {
-      const steps = pendingTutorialStepsRef.current;
-      pendingTutorialStepsRef.current = null;
-      geminiRef.current?.sendText(
-        `[TUTORIAL_LOADED] I've analyzed your tutorial. It has ${steps.length} steps: ${JSON.stringify(steps)}. Please call set_goals now with these steps.`
-      );
-    }
-  }, [gemini.status]);
 
   const onTimerDone = useCallback((label) => {
     addLog("info", `Timer done: ${label}`);
@@ -847,11 +910,13 @@ Only mark as visible if you can clearly see it.`,
         setTimeout(() => setTutorialLoadingStage(i + 1), delay)
       );
 
-      const steps = await analyzeTutorial(youtubeUrl);
+      const normalizedUrl = normalizeYouTubeUrl(youtubeUrl);
+      const steps = await analyzeTutorial(normalizedUrl);
       stageTimers.forEach(clearTimeout);
       setTutorialLoading(false);
       if (!steps) return; // tutorialError already set
       pendingTutorialStepsRef.current = steps;
+      pendingInjectRef.current = `[TUTORIAL_LOADED] I've analyzed your tutorial. It has ${steps.length} steps: ${JSON.stringify(steps)}. Please call set_goals now with these steps.`;
     }
 
     setStarted(true);
